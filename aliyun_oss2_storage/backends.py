@@ -5,6 +5,8 @@ import os
 import datetime
 import six
 import posixpath
+import random
+import time
 
 try:
     from urllib.parse import urljoin
@@ -100,6 +102,7 @@ class AliyunBaseStorage(BucketOperationMixin, Storage):
         else:
             return clean_name
 
+    #文件名称以/开头会上传错误 需去掉文件开头的/
     def _normalize_name(self, name):
         """
         Normalizes the name so that paths like /path/to/ignored/../foo.txt
@@ -125,19 +128,35 @@ class AliyunBaseStorage(BucketOperationMixin, Storage):
             name = name.encode('utf-8')
         return name
 
+    #以时间戳为文件名称+随机值重新组合文件名称避免文件名重复引起图片覆盖
+    def _get_random_file_name(self,name):
+        # 文件扩展名
+        ext = os.path.splitext(name)[1]
+        # 文件目录
+        d = os.path.dirname(name)
+        # 定义文件名，年月日时分秒随机数
+        fn = time.strftime('%Y%m%d%H%M%S')
+        fn = fn + '%d' % random.randint(0, 100)
+        # 重写合成文件名
+        name = os.path.join(d, fn + ext)
+        name = self._normalize_name(name);
+        if six.PY2:
+            name = name.encode('utf-8')
+        return name;
+
     def _open(self, name, mode='rb'):
         return AliyunFile(name, self, mode)
 
     def _save(self, name, content):
         # 为保证django行为的一致性，保存文件时，应该返回相对于`media path`的相对路径。
-        target_name = self._get_target_name(name)
+        target_name = self._get_random_file_name(name)
 
         content.open()
         content_str = b''.join(chunk for chunk in content.chunks())
         self.bucket.put_object(target_name, content_str)
         content.close()
 
-        return self._clean_name(name)
+        return target_name
 
     def get_file_header(self, name):
         name = self._get_target_name(name)
@@ -173,7 +192,7 @@ class AliyunBaseStorage(BucketOperationMixin, Storage):
     def url(self, name):
         name = self._normalize_name(self._clean_name(name))
         # name = filepath_to_uri(name) # 这段会导致二次encode
-        name = name.encode('utf8') 
+        name = name.encode('utf8')
         # 做这个转化，是因为下面的_make_url会用urllib.quote转码，转码不支持unicode，会报错，在python2环境下。
         return self.bucket._make_url(self.bucket_name, name)
 
